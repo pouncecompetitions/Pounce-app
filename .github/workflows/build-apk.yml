@@ -1,0 +1,63 @@
+name: Build Pounce APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check password
+        run: |
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::Add the KEYSTORE_PASSWORD secret first."
+            exit 1
+          fi
+
+      - name: Unpack the app
+        run: unzip -q -o pounce-app.zip -d app-src
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Signing key
+        run: |
+          if [ ! -f signing/pounce.jks ]; then
+            mkdir -p signing
+            keytool -genkeypair -keystore signing/pounce.jks -alias pounce -keyalg RSA -keysize 2048 -validity 10000 -storepass "$KEYSTORE_PASSWORD" -keypass "$KEYSTORE_PASSWORD" -dname "CN=Pounce Ltd, O=Pounce Ltd, L=London, C=GB"
+            git config user.name "Pounce build"
+            git config user.email "hello@pouncecompetitions.co.uk"
+            git add signing/pounce.jks
+            git commit -m "App signing key - never delete"
+            git push
+          fi
+          mkdir -p app-src/signing
+          cp signing/pounce.jks app-src/signing/
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Build the APK
+        working-directory: app-src
+        run: gradle :app:assembleRelease --no-daemon
+
+      - name: Name the APK
+        run: |
+          mkdir -p out
+          cp app-src/app/build/outputs/apk/release/app-release.apk out/Pounce-1.0.${{ github.run_number }}.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Pounce 1.0.${{ github.run_number }}
+          files: out/*.apk
